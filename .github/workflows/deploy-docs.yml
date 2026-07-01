@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+# This is the new block that grants the bot write access to push to gh-pages
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
