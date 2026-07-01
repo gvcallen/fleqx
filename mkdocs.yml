@@ -1,0 +1,74 @@
+theme:
+    name: material
+    features:
+        - navigation.sections
+        - toc.integrate
+        - header.autohide
+    palette:
+        - scheme: default
+          primary: white
+          accent: amber
+          toggle:
+             icon: material/weather-night
+             name: Switch to dark mode
+        - scheme: slate
+          primary: black
+          accent: amber
+          toggle:
+             icon: material/weather-sunny
+             name: Switch to light mode
+    icon:
+        repo: fontawesome/brands/github
+        logo: "material/chart-bell-curve"
+
+site_name: fleqx
+site_description: Normalizing flows for JAX, with a distreqx-native API.
+site_author: fleqx contributors
+site_url: https://gvcallen.github.io/fleqx
+
+repo_url: https://github.com/gvcallen/fleqx
+repo_name: gvcallen/fleqx
+edit_uri: "edit/main/docs/"
+
+strict: true
+
+extra_javascript:
+    - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+markdown_extensions:
+    - pymdownx.arithmatex:  # Render LaTeX via MathJax
+        generic: true
+    - pymdownx.superfences  # Syntax highlighting, works with the Material theme
+    - pymdownx.details  # Hidden expandable regions denoted by ???
+    - pymdownx.snippets:  # Lets docs/index.md include the top-level README
+        check_paths: true
+    - admonition
+    - toc:
+        permalink: "¤"
+        toc_depth: 4
+
+plugins:
+    - search
+    - mkdocstrings:
+        handlers:
+            python:
+                options:
+                    force_inspection: true
+                    heading_level: 4
+                    inherited_members: false
+                    members_order: source
+                    show_bases: false
+                    show_if_no_docstring: true
+                    show_overloads: false
+                    show_root_heading: true
+                    show_signature_annotations: true
+                    show_source: false
+                    show_symbol_type_heading: true
+                    show_symbol_type_toc: true
+
+nav:
+    - 'index.md'
+    - API:
+        - 'api/flows.md'
+        - 'api/bijectors.md'
+        - 'api/train.md'

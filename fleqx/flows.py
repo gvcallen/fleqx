@@ -1,0 +1,227 @@
+"""Constructors for normalizing-flow distributions.
+
+Each constructor returns a plain `distreqx.distributions.Transformed` -- a base
+distribution pushed through a bijector, no flow-specific wrapper class. As with any
+distreqx distribution, `log_prob` and `sample` take a single event; use `jax.vmap`
+for batches, e.g. `jax.vmap(flow.log_prob)(xs)`.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+import jax.numpy as jnp
+import jax.random as jr
+from distreqx.bijectors import AbstractBijector, Chain, ScalarAffine
+from distreqx.distributions import Independent, Normal, Transformed
+from jax.nn import relu
+from jaxtyping import Array, Float, PRNGKeyArray
+
+from .bijectors import Coupling, Invert, MaskedAutoregressive, Permute, Planar
+
+__all__ = ["coupling_flow", "masked_autoregressive_flow", "planar_flow"]
+
+
+def _default_permute(dim: int, key: PRNGKeyArray) -> AbstractBijector | None:
+    """A permutation to mix dimensions between layers.
+
+    `None` for `dim == 1`. For `dim == 2`, always swaps rather than drawing a random
+    permutation, since a random permutation of two elements is the identity half the
+    time.
+    """
+    if dim == 1:
+        return None
+    if dim == 2:
+        return Permute(jnp.array([1, 0]))
+    return Permute(jr.permutation(key, dim))
+
+
+def _standardizing_bijector(data: Float[Array, "n dim"]) -> ScalarAffine:
+    loc = jnp.mean(data, axis=0)
+    scale = jnp.std(data, axis=0)
+    return ScalarAffine(shift=loc, scale=scale)
+
+
+def _finalize(
+    bijector: AbstractBijector, *, dim: int, data: Float[Array, "n dim"] | None
+) -> Transformed:
+    if data is not None:
+        bijector = Chain([_standardizing_bijector(jnp.asarray(data)), bijector])
+    base = Independent(Normal(loc=jnp.zeros(dim), scale=jnp.ones(dim)))
+    return Transformed(base, bijector)
+
+
+def _stack_layers(
+    key: PRNGKeyArray, flow_layers: int, make_layer: Callable[[PRNGKeyArray], AbstractBijector]
+) -> AbstractBijector:
+    layer_keys = jr.split(key, flow_layers)
+    layers = [make_layer(k) for k in layer_keys]
+    return Chain(list(reversed(layers)))
+
+
+def coupling_flow(
+    key: PRNGKeyArray,
+    *,
+    dim: int,
+    flow_layers: int = 8,
+    nn_width: int = 50,
+    nn_depth: int = 1,
+    nn_activation: Callable = relu,
+    invert: bool = True,
+    data: Float[Array, "n dim"] | None = None,
+) -> Transformed:
+    """Coupling flow ([Dinh et al., 2016](https://arxiv.org/abs/1605.08803)).
+
+    A stack of affine coupling layers ([`fleqx.bijectors.Coupling`][]), each followed
+    by a permutation, applied to a learnable diagonal-Gaussian base distribution.
+
+    **Arguments:**
+
+    - `key`: JAX random key.
+    - `dim`: Dimensionality of the distribution.
+    - `flow_layers`: Number of coupling layers. Defaults to 8.
+    - `nn_width`: Conditioner hidden layer width. Defaults to 50.
+    - `nn_depth`: Conditioner depth. Defaults to 1.
+    - `nn_activation`: Conditioner activation function. Defaults to `jax.nn.relu`.
+    - `invert`: If `True` (default), `log_prob` is the fast direction; if `False`,
+        `sample` is.
+    - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
+        layer maps the flow's output to `data`'s mean and standard deviation
+        from the start, rather than the base distribution learning this during
+        training. Gives training a head start; useful when training for few
+        epochs. Defaults to `None`.
+
+    **Returns:**
+
+    A `distreqx.distributions.Transformed` distribution.
+    """
+    if dim < 1:
+        raise ValueError(f"`dim` must be a positive integer, got {dim}.")
+
+    def make_layer(k: PRNGKeyArray) -> AbstractBijector:
+        bij_key, perm_key = jr.split(k)
+        coupling = Coupling(
+            bij_key,
+            untransformed_dim=dim // 2,
+            dim=dim,
+            nn_width=nn_width,
+            nn_depth=nn_depth,
+            nn_activation=nn_activation,
+        )
+        permute = _default_permute(dim, perm_key)
+        return coupling if permute is None else Chain([permute, coupling])
+
+    bijector = _stack_layers(key, flow_layers, make_layer)
+    if invert:
+        bijector = Invert(bijector)
+    return _finalize(bijector, dim=dim, data=data)
+
+
+def masked_autoregressive_flow(
+    key: PRNGKeyArray,
+    *,
+    dim: int,
+    flow_layers: int = 8,
+    nn_width: int = 50,
+    nn_depth: int = 1,
+    nn_activation: Callable = relu,
+    invert: bool = True,
+    data: Float[Array, "n dim"] | None = None,
+) -> Transformed:
+    """Masked autoregressive flow ([Papamakarios et al., 2017](https://arxiv.org/abs/1705.07057)).
+
+    A stack of masked autoregressive layers ([`fleqx.bijectors.MaskedAutoregressive`][]),
+    each followed by a permutation, applied to a learnable diagonal-Gaussian base
+    distribution.
+
+    Unlike [`coupling_flow`][fleqx.flows.coupling_flow], the two transform directions
+    genuinely differ in cost: one is a single parallel pass, the other a `dim`-step
+    sequential loop. `invert` picks which direction `log_prob` gets.
+
+    **Arguments:**
+
+    - `key`: JAX random key.
+    - `dim`: Dimensionality of the distribution.
+    - `flow_layers`: Number of masked autoregressive layers. Defaults to 8.
+    - `nn_width`: Conditioner hidden layer width. Defaults to 50.
+    - `nn_depth`: Conditioner depth. Defaults to 1.
+    - `nn_activation`: Conditioner activation function. Defaults to `jax.nn.relu`.
+    - `invert`: If `True` (default), `log_prob` is the fast (parallel) direction --
+        recommended for maximum-likelihood training. If `False`, `sample` is fast
+        instead.
+    - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
+        layer maps the flow's output to `data`'s mean and standard deviation
+        from the start, rather than the base distribution learning this during
+        training. Gives training a head start; useful when training for few
+        epochs. Defaults to `None`.
+
+    **Returns:**
+
+    A `distreqx.distributions.Transformed` distribution.
+    """
+    if dim < 1:
+        raise ValueError(f"`dim` must be a positive integer, got {dim}.")
+
+    def make_layer(k: PRNGKeyArray) -> AbstractBijector:
+        bij_key, perm_key = jr.split(k)
+        maf = MaskedAutoregressive(
+            bij_key,
+            dim=dim,
+            nn_width=nn_width,
+            nn_depth=nn_depth,
+            nn_activation=nn_activation,
+        )
+        permute = _default_permute(dim, perm_key)
+        return maf if permute is None else Chain([permute, maf])
+
+    bijector = _stack_layers(key, flow_layers, make_layer)
+    if invert:
+        bijector = Invert(bijector)
+    return _finalize(bijector, dim=dim, data=data)
+
+
+def planar_flow(
+    key: PRNGKeyArray,
+    *,
+    dim: int,
+    flow_layers: int = 8,
+    negative_slope: float = 1e-2,
+    invert: bool = True,
+    data: Float[Array, "n dim"] | None = None,
+) -> Transformed:
+    """Planar flow ([Rezende and Mohamed, 2015](https://arxiv.org/abs/1505.05770)).
+
+    A stack of planar layers ([`fleqx.bijectors.Planar`][]) applied to a learnable
+    diagonal-Gaussian base distribution. No permutation is needed between layers,
+    since each planar layer already depends on every dimension.
+
+    **Arguments:**
+
+    - `key`: JAX random key.
+    - `dim`: Dimensionality of the distribution.
+    - `flow_layers`: Number of planar layers. Defaults to 8.
+    - `negative_slope`: Negative slope of the leaky ReLU used within each layer (see
+        [`fleqx.bijectors.Planar`][]), in `(0, 1)`. Defaults to 0.01.
+    - `invert`: If `True` (default), `log_prob` is the fast direction; if `False`,
+        `sample` is.
+    - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
+        layer maps the flow's output to `data`'s mean and standard deviation
+        from the start, rather than the base distribution learning this during
+        training. Gives training a head start; useful when training for few
+        epochs. Defaults to `None`.
+
+    **Returns:**
+
+    A `distreqx.distributions.Transformed` distribution.
+    """
+    if dim < 1:
+        raise ValueError(f"`dim` must be a positive integer, got {dim}.")
+
+    def make_layer(k: PRNGKeyArray) -> AbstractBijector:
+        return Planar(k, dim=dim, negative_slope=negative_slope)
+
+    bijector = _stack_layers(key, flow_layers, make_layer)
+    if invert:
+        bijector = Invert(bijector)
+    return _finalize(bijector, dim=dim, data=data)
+
