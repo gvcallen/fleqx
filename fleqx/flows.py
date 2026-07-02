@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 from distreqx.bijectors import (
@@ -43,15 +45,31 @@ def _default_permute(dim: int, key: PRNGKeyArray) -> AbstractBijector | None:
     return Permute(jr.permutation(key, dim))
 
 
-class _SumLogDet(
+class _FrozenSumLogDet(
     AbstractForwardInverseBijector, AbstractFwdLogDetJacBijector, AbstractInvLogDetJacBijector
 ):
-    """Wraps a bijector, summing its log-det to a scalar.
+    """Wraps a bijector, freezing its parameters and summing its log-det to a scalar.
 
-    `ScalarAffine`'s log-det is elementwise (one entry per dimension), unlike every
-    other bijector `_finalize` composes it with via `Chain`, which already reduce to
-    a scalar internally. Without this, `Chain` would silently broadcast-add a scalar
-    and a `(dim,)` array, giving `log_prob` the wrong shape.
+    Two independent fixes bundled into one wrapper, both needed for `ScalarAffine`
+    specifically:
+
+    - Its log-det is elementwise (one entry per dimension), unlike every other
+      bijector `_finalize` composes it with via `Chain`, which already reduce to a
+      scalar internally. Without summing here, `Chain` would silently broadcast-add
+      a scalar and a `(dim,)` array, giving `log_prob` the wrong shape.
+    - It stores `scale`, `inv_scale` and `log_scale` as independent leaves that are
+      supposed to satisfy `scale == 1/inv_scale == exp(log_scale)`, rather than
+      deriving two of them from the third. MLE training only ever calls
+      `inverse_and_log_det` (`forward` is only used by `sample`), which touches
+      `inv_scale`/`log_scale` but never `scale` itself -- so gradient descent would
+      drift the two it does touch, silently desynchronizing all three and breaking
+      `forward(inverse(y)) == y`. Stopping the gradient here keeps it a fixed,
+      self-consistent preprocessing step, initialised once from `data`.
+
+    `stop_gradient` has to be applied on every call (not once in `__init__`) since
+    `fit` reconstructs this bijector from scratch inside every differentiated step
+    via `eqx.combine` -- a `stop_gradient` from an earlier, unrelated trace has no
+    effect on a later one.
     """
 
     bijector: AbstractBijector
@@ -63,17 +81,21 @@ class _SumLogDet(
         self._is_constant_jacobian = bijector.is_constant_jacobian
         self._is_constant_log_det = bijector.is_constant_log_det
 
+    def _frozen_bijector(self) -> AbstractBijector:
+        params, static = eqx.partition(self.bijector, eqx.is_inexact_array)
+        return eqx.combine(jax.tree_util.tree_map(jax.lax.stop_gradient, params), static)
+
     def forward_and_log_det(self, x: Array) -> tuple[Array, Array]:
-        y, log_det = self.bijector.forward_and_log_det(x)
+        y, log_det = self._frozen_bijector().forward_and_log_det(x)
         return y, jnp.sum(log_det)
 
     def inverse_and_log_det(self, y: Array) -> tuple[Array, Array]:
-        x, log_det = self.bijector.inverse_and_log_det(y)
+        x, log_det = self._frozen_bijector().inverse_and_log_det(y)
         return x, jnp.sum(log_det)
 
     def same_as(self, other: AbstractBijector) -> bool:
         """Returns True if this bijector is guaranteed to be the same as `other`."""
-        if type(other) is _SumLogDet:
+        if type(other) is _FrozenSumLogDet:
             return self.bijector.same_as(other.bijector)
         return False
 
@@ -81,7 +103,7 @@ class _SumLogDet(
 def _standardizing_bijector(data: Float[Array, "n dim"]) -> AbstractBijector:
     loc = jnp.mean(data, axis=0)
     scale = jnp.std(data, axis=0)
-    return _SumLogDet(ScalarAffine(shift=loc, scale=scale))
+    return _FrozenSumLogDet(ScalarAffine(shift=loc, scale=scale))
 
 
 def _finalize(
@@ -130,8 +152,9 @@ def coupling_flow(
     - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
         layer maps the flow's output to `data`'s mean and standard deviation
         from the start, rather than the base distribution learning this during
-        training. Gives training a head start; useful when training for few
-        epochs. Defaults to `None`.
+        training. This layer is frozen (`fit` won't move it further), so it's
+        purely a fixed preprocessing step. Gives training a head start; useful
+        when training for few epochs. Defaults to `None`.
 
     **Returns:**
 
@@ -194,8 +217,9 @@ def masked_autoregressive_flow(
     - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
         layer maps the flow's output to `data`'s mean and standard deviation
         from the start, rather than the base distribution learning this during
-        training. Gives training a head start; useful when training for few
-        epochs. Defaults to `None`.
+        training. This layer is frozen (`fit` won't move it further), so it's
+        purely a fixed preprocessing step. Gives training a head start; useful
+        when training for few epochs. Defaults to `None`.
 
     **Returns:**
 
@@ -249,8 +273,9 @@ def planar_flow(
     - `data`: Optional array of shape `(n, dim)`. If given, an extra affine
         layer maps the flow's output to `data`'s mean and standard deviation
         from the start, rather than the base distribution learning this during
-        training. Gives training a head start; useful when training for few
-        epochs. Defaults to `None`.
+        training. This layer is frozen (`fit` won't move it further), so it's
+        purely a fixed preprocessing step. Gives training a head start; useful
+        when training for few epochs. Defaults to `None`.
 
     **Returns:**
 

@@ -82,6 +82,37 @@ def test_trained_flow_is_usable():
     assert jnp.isfinite(trained.log_prob(sample))
 
 
+def test_data_standardization_survives_training_unchanged():
+    # Regression test: `ScalarAffine`'s `scale`, `inv_scale` and `log_scale` are
+    # independent leaves that must satisfy scale == 1/inv_scale == exp(log_scale).
+    # MLE training only ever exercises the bijector's inverse direction (`forward`
+    # is only used by `sample`), which touches `inv_scale`/`log_scale` but never
+    # `scale` -- so without freezing it, gradient descent would drift the two it
+    # does touch and desynchronize all three, breaking `forward(inverse(y)) == y`.
+    data = _target_data(jr.key(30), n=256) * jnp.array([1000.0, 0.01]) + jnp.array(
+        [5000.0, -50.0]
+    )
+    flow = fleqx.flows.coupling_flow(
+        jr.key(31), dim=DIM, flow_layers=2, nn_width=16, data=data
+    )
+    trained, _ = fit(
+        jr.key(32), flow, data, max_epochs=10, batch_size=64, show_progress=False
+    )
+
+    initial_affine = flow.bijector.bijectors[0].bijector
+    trained_affine = trained.bijector.bijectors[0].bijector
+    for name in ("shift", "scale", "inv_scale", "log_scale"):
+        assert jnp.array_equal(
+            getattr(initial_affine, name), getattr(trained_affine, name)
+        )
+
+    y = jr.normal(jr.key(33), (DIM,)) * jnp.array([1000.0, 0.01]) + jnp.array(
+        [5000.0, -50.0]
+    )
+    x = trained_affine.inverse(y)
+    assert jnp.allclose(trained_affine.forward(x), y, atol=1e-3)
+
+
 def test_loss_is_scalar_and_finite():
     flow = fleqx.flows.coupling_flow(jr.key(7), dim=DIM, flow_layers=2, nn_width=16)
     data = _target_data(jr.key(8), n=64)
