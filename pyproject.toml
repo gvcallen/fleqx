@@ -1,6 +1,6 @@
 [project]
 name = "fleqx"
-version = "0.0.2"
+version = "0.0.3"
 description = "Normalizing flows for JAX, with a distreqx-native API."
 readme = "README.md"
 requires-python = ">=3.11"
