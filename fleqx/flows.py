@@ -12,12 +12,19 @@ from collections.abc import Callable
 
 import jax.numpy as jnp
 import jax.random as jr
-from distreqx.bijectors import AbstractBijector, Chain, ScalarAffine
+from distreqx.bijectors import (
+    AbstractBijector,
+    AbstractForwardInverseBijector,
+    AbstractFwdLogDetJacBijector,
+    AbstractInvLogDetJacBijector,
+    Chain,
+    ScalarAffine,
+)
 from distreqx.distributions import Independent, Normal, Transformed
 from jax.nn import relu
 from jaxtyping import Array, Float, PRNGKeyArray
 
-from .bijectors import Coupling, Invert, MaskedAutoregressive, Permute, Planar
+from .bijectors import Coupling, Inverse, MaskedAutoregressive, Permute, Planar
 
 __all__ = ["coupling_flow", "masked_autoregressive_flow", "planar_flow"]
 
@@ -36,10 +43,45 @@ def _default_permute(dim: int, key: PRNGKeyArray) -> AbstractBijector | None:
     return Permute(jr.permutation(key, dim))
 
 
-def _standardizing_bijector(data: Float[Array, "n dim"]) -> ScalarAffine:
+class _SumLogDet(
+    AbstractForwardInverseBijector, AbstractFwdLogDetJacBijector, AbstractInvLogDetJacBijector
+):
+    """Wraps a bijector, summing its log-det to a scalar.
+
+    `ScalarAffine`'s log-det is elementwise (one entry per dimension), unlike every
+    other bijector `_finalize` composes it with via `Chain`, which already reduce to
+    a scalar internally. Without this, `Chain` would silently broadcast-add a scalar
+    and a `(dim,)` array, giving `log_prob` the wrong shape.
+    """
+
+    bijector: AbstractBijector
+    _is_constant_jacobian: bool
+    _is_constant_log_det: bool
+
+    def __init__(self, bijector: AbstractBijector):
+        self.bijector = bijector
+        self._is_constant_jacobian = bijector.is_constant_jacobian
+        self._is_constant_log_det = bijector.is_constant_log_det
+
+    def forward_and_log_det(self, x: Array) -> tuple[Array, Array]:
+        y, log_det = self.bijector.forward_and_log_det(x)
+        return y, jnp.sum(log_det)
+
+    def inverse_and_log_det(self, y: Array) -> tuple[Array, Array]:
+        x, log_det = self.bijector.inverse_and_log_det(y)
+        return x, jnp.sum(log_det)
+
+    def same_as(self, other: AbstractBijector) -> bool:
+        """Returns True if this bijector is guaranteed to be the same as `other`."""
+        if type(other) is _SumLogDet:
+            return self.bijector.same_as(other.bijector)
+        return False
+
+
+def _standardizing_bijector(data: Float[Array, "n dim"]) -> AbstractBijector:
     loc = jnp.mean(data, axis=0)
     scale = jnp.std(data, axis=0)
-    return ScalarAffine(shift=loc, scale=scale)
+    return _SumLogDet(ScalarAffine(shift=loc, scale=scale))
 
 
 def _finalize(
@@ -113,7 +155,7 @@ def coupling_flow(
 
     bijector = _stack_layers(key, flow_layers, make_layer)
     if invert:
-        bijector = Invert(bijector)
+        bijector = Inverse(bijector)
     return _finalize(bijector, dim=dim, data=data)
 
 
@@ -176,7 +218,7 @@ def masked_autoregressive_flow(
 
     bijector = _stack_layers(key, flow_layers, make_layer)
     if invert:
-        bijector = Invert(bijector)
+        bijector = Inverse(bijector)
     return _finalize(bijector, dim=dim, data=data)
 
 
@@ -222,6 +264,6 @@ def planar_flow(
 
     bijector = _stack_layers(key, flow_layers, make_layer)
     if invert:
-        bijector = Invert(bijector)
+        bijector = Inverse(bijector)
     return _finalize(bijector, dim=dim, data=data)
 

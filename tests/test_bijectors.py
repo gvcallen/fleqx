@@ -6,7 +6,7 @@ import jax.random as jr
 import pytest
 from distreqx.bijectors import AbstractBijector
 
-from fleqx.bijectors import Coupling, Invert, MaskedAutoregressive, Permute, Planar
+from fleqx.bijectors import Coupling, Inverse, MaskedAutoregressive, Permute, Planar
 
 DIM = 5
 
@@ -173,26 +173,43 @@ class TestPlanar:
         assert not jnp.allclose(p0.forward(x), p1.forward(x))
 
 
-class TestInvert:
+class TestInverse:
     def test_swaps_forward_and_inverse(self, coupling):
-        inverted = Invert(coupling)
+        inverted = Inverse(coupling)
         x = jr.normal(jr.key(1), (DIM,))
         assert jnp.array_equal(inverted.forward(x), coupling.inverse(x))
         assert jnp.array_equal(inverted.inverse(x), coupling.forward(x))
 
     def test_swaps_log_det(self, coupling):
-        inverted = Invert(coupling)
+        inverted = Inverse(coupling)
         x = jr.normal(jr.key(1), (DIM,))
         _, inverted_fwd_log_det = inverted.forward_and_log_det(x)
         _, coupling_inv_log_det = coupling.inverse_and_log_det(x)
         assert jnp.allclose(inverted_fwd_log_det, coupling_inv_log_det)
 
     def test_double_invert_matches_original(self, coupling):
-        double_inverted = Invert(Invert(coupling))
+        double_inverted = Inverse(Inverse(coupling))
         x = jr.normal(jr.key(1), (DIM,))
         assert jnp.array_equal(double_inverted.forward(x), coupling.forward(x))
 
     def test_inherits_constant_jacobian_flag(self):
         perm = Permute(jnp.array([1, 0]))
-        assert Invert(perm).is_constant_jacobian is True
-        assert Invert(perm).is_constant_log_det is True
+        assert Inverse(perm).is_constant_jacobian is True
+        assert Inverse(perm).is_constant_log_det is True
+
+
+class TestPermuteValidation:
+    def test_rejects_non_1d_permutation(self):
+        with pytest.raises(ValueError, match="1D array"):
+            Permute([[0, 1], [2, 3]])
+
+    def test_rejects_invalid_permutation(self):
+        with pytest.raises(ValueError, match="exactly once"):
+            Permute([0, 1, 1])
+        with pytest.raises(ValueError, match="exactly once"):
+            Permute([0, 2, 3])
+
+    def test_accepts_list_input(self):
+        perm = Permute([2, 0, 1])
+        x = jnp.array([10.0, 20.0, 30.0])
+        assert jnp.array_equal(perm.forward(x), jnp.array([30.0, 10.0, 20.0]))

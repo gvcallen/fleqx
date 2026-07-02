@@ -5,21 +5,29 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
 from distreqx.distributions import AbstractDistribution
-from jaxtyping import Array, Float, PRNGKeyArray, Scalar
+from jaxtyping import PRNGKeyArray, PyTree, Scalar
 from tqdm import tqdm
 
 from ._losses import MaximumLikelihoodLoss
-from ._train_utils import count_fruitless, get_batches, step, train_val_split
+from ._train_utils import (
+    count_fruitless,
+    get_batches,
+    leading_axis_size,
+    shuffle,
+    step,
+    train_val_split,
+)
 
 
 def fit(
     key: PRNGKeyArray,
     dist: AbstractDistribution,
-    data: Float[Array, "n dim"],
+    data: PyTree,
     *,
     loss_fn: Callable[..., Scalar] | None = None,
     learning_rate: float = 5e-4,
@@ -43,8 +51,11 @@ def fit(
     - `key`: JAX random key controlling the train/validation split, shuffling, and
         (if applicable) any stochasticity in `loss_fn`.
     - `dist`: The distribution to train (as returned by e.g.
-        [`fleqx.flows.coupling_flow`][]).
-    - `data`: Array of observations with shape ``(n, dim)``.
+        [`fleqx.flows.coupling_flow`][]). Can be any pytree of distreqx
+        distributions, e.g. for a jointly-trained model.
+    - `data`: A pytree of observation arrays, each sharing a leading axis of size
+        ``n`` (e.g. a single ``(n, dim)`` array, or a tuple/dict of such arrays
+        matching a structured `dist.log_prob` event). Leaves may be `None`.
     - `loss_fn`: Loss with signature ``(params, static, x, key)``. Defaults to
         [`fleqx.train.MaximumLikelihoodLoss`][].
     - `learning_rate`: Adam learning rate. Ignored if `optimizer` is given.
@@ -69,7 +80,7 @@ def fit(
     if optimizer is None:
         optimizer = optax.adam(learning_rate)
 
-    data = (jnp.asarray(data),)
+    data = jax.tree_util.tree_map(jnp.asarray, data)
     params, static = eqx.partition(dist, eqx.is_inexact_array)
     best_params = params
     opt_state = optimizer.init(params)
@@ -81,16 +92,18 @@ def fit(
     loop = tqdm(range(max_epochs), disable=not show_progress)
     for _ in loop:
         key, *subkeys = jr.split(key, 3)
-        train_data = [jr.permutation(subkeys[0], a) for a in train_data]
-        val_data = [jr.permutation(subkeys[1], a) for a in val_data]
+        train_data = shuffle(subkeys[0], train_data)
+        val_data = shuffle(subkeys[1], val_data)
 
         batch_losses = []
-        for batch in zip(*get_batches(train_data, batch_size), strict=True):
+        train_batches = get_batches(train_data, batch_size)
+        for i in range(leading_axis_size(train_batches)):
+            batch = jax.tree_util.tree_map(lambda a: a[i], train_batches)
             key, subkey = jr.split(key)
             params, opt_state, loss_i = step(
                 params,
                 static,
-                *batch,
+                batch,
                 optimizer=optimizer,
                 opt_state=opt_state,
                 loss_fn=loss_fn,
@@ -100,9 +113,11 @@ def fit(
         losses["train"].append((sum(batch_losses) / len(batch_losses)).item())
 
         batch_losses = []
-        for batch in zip(*get_batches(val_data, batch_size), strict=True):
+        val_batches = get_batches(val_data, batch_size)
+        for i in range(leading_axis_size(val_batches)):
+            batch = jax.tree_util.tree_map(lambda a: a[i], val_batches)
             key, subkey = jr.split(key)
-            loss_i = eqx.filter_jit(loss_fn)(params, static, *batch, key=subkey)
+            loss_i = eqx.filter_jit(loss_fn)(params, static, batch, key=subkey)
             batch_losses.append(loss_i)
         losses["val"].append((sum(batch_losses) / len(batch_losses)).item())
 

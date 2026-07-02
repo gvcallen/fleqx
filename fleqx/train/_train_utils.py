@@ -1,15 +1,18 @@
 """Generic training utilities: batching, splitting, and an optax step.
 
 Nothing here is specific to distreqx or to flows -- these operate on any pytree and
-loss function.
+loss function. `data` pytrees may contain `None` leaves (e.g. an unused optional
+field); `jax.tree_util` treats those as empty subtrees, so they pass through
+untouched wherever a real array would be shuffled, split or batched.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
@@ -33,34 +36,48 @@ def step(
     return params, opt_state, loss_val
 
 
+def leading_axis_size(data: PyTree) -> int:
+    """The shared leading-axis size of `data`'s (non-`None`) leaves."""
+    leaves = jax.tree_util.tree_leaves(data)
+    if not leaves:
+        raise ValueError("`data` has no array leaves to determine a sample count from.")
+    return leaves[0].shape[0]
+
+
+def shuffle(key: PRNGKeyArray, data: PyTree) -> PyTree:
+    """Shuffles every leaf of `data` along axis 0, with a shared permutation."""
+    perm = jr.permutation(key, leading_axis_size(data))
+    return jax.tree_util.tree_map(lambda a: a[perm], data)
+
+
 def train_val_split(
     key: PRNGKeyArray,
-    arrays: Sequence[Array],
+    data: PyTree,
     val_prop: float = 0.1,
-) -> tuple[list[Array], list[Array]]:
-    """Random train/validation split for a sequence of arrays sharing axis-0 size."""
+) -> tuple[PyTree, PyTree]:
+    """Random train/validation split of a pytree of arrays sharing axis-0 size."""
     if not 0 <= val_prop <= 1:
         raise ValueError("val_prop should be between 0 and 1.")
-    num_samples = arrays[0].shape[0]
-    n_train = num_samples - round(val_prop * num_samples)
-    arrays = [jr.permutation(key, a) for a in arrays]
-    train_arrays = [arr[:n_train] for arr in arrays]
-    val_arrays = [arr[n_train:] for arr in arrays]
-    return train_arrays, val_arrays
+    n_train = leading_axis_size(data) - round(val_prop * leading_axis_size(data))
+    data = shuffle(key, data)
+    train_data = jax.tree_util.tree_map(lambda a: a[:n_train], data)
+    val_data = jax.tree_util.tree_map(lambda a: a[n_train:], data)
+    return train_data, val_data
 
 
 @partial(jit, static_argnums=1)
-def get_batches(arrays: Sequence[Array], batch_size: int) -> tuple[Array, ...]:
-    """Reshape arrays with shape ``(n, ...)`` to ``(n // batch_size, batch_size, ...)``.
+def get_batches(data: PyTree, batch_size: int) -> PyTree:
+    """Reshape `data`'s leaves with shape ``(n, ...)`` to ``(n // batch_size,
+    batch_size, ...)``.
 
     The trailing partial batch is dropped if truncated (to avoid recompilation), and
-    `batch_size` is capped at the array length.
+    `batch_size` is capped at the leading axis size.
     """
-    return tuple(_add_batch(arr, batch_size) for arr in arrays)
+    batch_size = min(batch_size, leading_axis_size(data))
+    return jax.tree_util.tree_map(lambda a: _add_batch(a, batch_size), data)
 
 
 def _add_batch(arr: Array, batch_size: int) -> Array:
-    batch_size = min(batch_size, arr.shape[0])
     n_batches = arr.shape[0] // batch_size
     return arr[: n_batches * batch_size].reshape(n_batches, batch_size, *arr.shape[1:])
 

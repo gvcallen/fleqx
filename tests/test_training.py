@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
+from distreqx.distributions import AbstractDistribution, Independent, Normal
 
 import fleqx
 from fleqx.train import MaximumLikelihoodLoss, fit
@@ -145,3 +146,104 @@ def test_return_best_differs_from_final_when_trajectory_is_noisy():
     assert any(
         not jnp.array_equal(b, f) for b, f in zip(best_leaves, final_leaves)
     )
+
+
+class _JointDistribution(eqx.Module):
+    """Combines two distributions into one over `{"a": ..., "b": ...}` pytrees.
+
+    Not part of the public `fleqx` API -- just enough structure to exercise `fit`
+    with a pytree-shaped `dist`/`data`, standing in for e.g. a jointly-trained model
+    over multiple named variables.
+    """
+
+    dist_a: AbstractDistribution
+    dist_b: AbstractDistribution
+
+    def sample(self, key):
+        key_a, key_b = jr.split(key)
+        return {"a": self.dist_a.sample(key_a), "b": self.dist_b.sample(key_b)}
+
+    def log_prob(self, value):
+        lp = self.dist_a.log_prob(value["a"])
+        if value["b"] is not None:
+            lp = lp + self.dist_b.log_prob(value["b"])
+        return lp
+
+
+class TestPytreeData:
+    """`dist` and `data` can be arbitrary pytrees, not just a single array."""
+
+    def _make_joint(self, key):
+        key_a, key_b = jr.split(key)
+        dist_a = fleqx.flows.coupling_flow(key_a, dim=DIM, flow_layers=2, nn_width=16)
+        dist_b = Independent(Normal(loc=jnp.zeros(DIM), scale=jnp.ones(DIM)))
+        return _JointDistribution(dist_a, dist_b)
+
+    def test_fit_accepts_dict_pytree_data(self):
+        joint = self._make_joint(jr.key(0))
+        data = {
+            "a": _target_data(jr.key(1), n=256),
+            "b": _target_data(jr.key(2), n=256),
+        }
+
+        trained, losses = fit(
+            jr.key(3),
+            joint,
+            data,
+            learning_rate=1e-3,
+            max_epochs=10,
+            batch_size=64,
+            show_progress=False,
+        )
+
+        assert all(jnp.isfinite(jnp.array(losses["train"])))
+        assert losses["train"][-1] < losses["train"][0]
+
+        sample = trained.sample(jr.key(4))
+        assert set(sample) == {"a", "b"}
+        assert jnp.isfinite(trained.log_prob(sample))
+
+    def test_fit_accepts_none_leaf(self):
+        # `dist_b` is untrained here -- `data["b"]` is `None` throughout, so only
+        # `dist_a`'s parameters should move.
+        joint = self._make_joint(jr.key(10))
+        data = {"a": _target_data(jr.key(11), n=256), "b": None}
+
+        trained, losses = fit(
+            jr.key(12),
+            joint,
+            data,
+            learning_rate=1e-3,
+            max_epochs=10,
+            batch_size=64,
+            show_progress=False,
+        )
+
+        assert all(jnp.isfinite(jnp.array(losses["train"])))
+        assert losses["train"][-1] < losses["train"][0]
+
+        a_before = jax.tree_util.tree_leaves(eqx.filter(joint.dist_a, eqx.is_inexact_array))
+        a_after = jax.tree_util.tree_leaves(eqx.filter(trained.dist_a, eqx.is_inexact_array))
+        assert any(not jnp.array_equal(b, a) for b, a in zip(a_before, a_after))
+
+        b_before = jax.tree_util.tree_leaves(eqx.filter(joint.dist_b, eqx.is_inexact_array))
+        b_after = jax.tree_util.tree_leaves(eqx.filter(trained.dist_b, eqx.is_inexact_array))
+        assert all(jnp.array_equal(b, a) for b, a in zip(b_before, b_after))
+
+    def test_plain_array_data_is_unaffected(self):
+        # The common case (a bare array, no surrounding pytree) is itself a trivial
+        # pytree, so it should behave exactly as it did before this generalisation.
+        flow = fleqx.flows.coupling_flow(jr.key(20), dim=DIM, flow_layers=2, nn_width=16)
+        data = _target_data(jr.key(21), n=256)
+
+        _, losses = fit(
+            jr.key(22),
+            flow,
+            data,
+            learning_rate=1e-3,
+            max_epochs=10,
+            batch_size=64,
+            show_progress=False,
+        )
+        assert all(jnp.isfinite(jnp.array(losses["train"])))
+        assert losses["train"][-1] < losses["train"][0]

@@ -5,6 +5,11 @@ these directly, but they compose like any other
 [`distreqx.bijectors.AbstractBijector`](https://lockwo.github.io/distreqx/api/bijectors/_bijector/)
 if you want to assemble a flow by hand.
 
+`Inverse` and `Permute` also exist in [gvcallen's distreqx
+fork](https://github.com/gvcallen/distreqx) (pending upstream review); fleqx uses
+that implementation when the fork is installed in place of the PyPI release of
+`distreqx`, falling back to the bundled version documented here otherwise.
+
 ::: fleqx.bijectors.Coupling
     options:
         members:
@@ -33,7 +38,6 @@ if you want to assemble a flow by hand.
 
 ---
 
-::: fleqx.bijectors.Invert
+::: fleqx.bijectors.Inverse
     options:
-        members:
-            - __init__
+        members: false

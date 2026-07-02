@@ -13,8 +13,9 @@ class MaximumLikelihoodLoss:
 
     The call signature ``(params, static, x, key)`` matches what
     [`fleqx.train.fit`][] expects: ``params`` and ``static`` are the two halves of an
-    ``equinox.partition`` of the distribution, ``x`` is a batch of observations, and
-    ``key`` is accepted (and ignored) for API consistency with stochastic losses.
+    ``equinox.partition`` of the distribution, ``x`` is a batch of observations
+    (a pytree, matching whatever event shape ``dist.log_prob`` expects), and ``key``
+    is accepted (and ignored) for API consistency with stochastic losses.
     """
 
     @eqx.filter_jit
@@ -22,7 +23,7 @@ class MaximumLikelihoodLoss:
         self,
         params: PyTree,
         static: PyTree,
-        x: Float[Array, "batch dim"],
+        x: PyTree[Float[Array, "batch ..."]],
         key: PRNGKeyArray | None = None,
     ) -> Float[Array, ""]:
         """Return the mean negative log-likelihood of ``x`` under the distribution."""
