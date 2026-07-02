@@ -13,9 +13,10 @@ exists in `distreqx` itself (yet -- see [gvcallen's distreqx fork]
 the PyPI release of `distreqx`, so a plain `pip install fleqx` works standalone; but
 if the fork is installed in its place (`pip install
 git+https://github.com/gvcallen/distreqx.git@main`), fleqx prefers its
-implementations over the bundled fallbacks below. A bijector with no fallback should
-follow the same `try`/`except ImportError` pattern, but raise a `RuntimeError` with
-install instructions instead of falling back, since there's nothing to fall back to.
+implementations over the bundled fallbacks below. A bijector with no fallback (e.g.
+[`fleqx.flows`][]'s `template=` support) should instead use
+[`fleqx.bijectors._fork.require`][], which raises a clear `RuntimeError` with install
+instructions rather than falling back, since there's nothing to fall back to.
 """
 
 try:

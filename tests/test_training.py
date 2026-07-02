@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import parax
 import pytest
 from distreqx.distributions import AbstractDistribution, Independent, Normal
 
@@ -99,8 +100,8 @@ def test_data_standardization_survives_training_unchanged():
         jr.key(32), flow, data, max_epochs=10, batch_size=64, show_progress=False
     )
 
-    initial_affine = flow.bijector.bijectors[0].bijector
-    trained_affine = trained.bijector.bijectors[0].bijector
+    initial_affine = parax.unwrap(flow.bijector.bijectors[0].bijector)
+    trained_affine = parax.unwrap(trained.bijector.bijectors[0].bijector)
     for name in ("shift", "scale", "inv_scale", "log_scale"):
         assert jnp.array_equal(
             getattr(initial_affine, name), getattr(trained_affine, name)
@@ -116,8 +117,7 @@ def test_data_standardization_survives_training_unchanged():
 def test_loss_is_scalar_and_finite():
     flow = fleqx.flows.coupling_flow(jr.key(7), dim=DIM, flow_layers=2, nn_width=16)
     data = _target_data(jr.key(8), n=64)
-    params, static = eqx.partition(flow, eqx.is_inexact_array)
-    loss = MaximumLikelihoodLoss()(params, static, data)
+    loss = MaximumLikelihoodLoss()(flow, data)
     assert loss.shape == ()
     assert jnp.isfinite(loss)
 
@@ -132,9 +132,9 @@ class _NoisyLoss:
         self.base_loss = base_loss
         self.noise_scale = noise_scale
 
-    def __call__(self, params, static, x, key):
+    def __call__(self, model, x, key):
         noise = self.noise_scale * jax.random.normal(key)
-        return self.base_loss(params, static, x, key) + noise
+        return self.base_loss(model, x, key) + noise
 
 
 def test_early_stopping_respects_max_patience():

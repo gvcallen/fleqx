@@ -16,6 +16,7 @@ from tqdm import tqdm
 from ._losses import MaximumLikelihoodLoss
 from ._train_utils import (
     count_fruitless,
+    evaluate,
     get_batches,
     leading_axis_size,
     shuffle,
@@ -56,7 +57,8 @@ def fit(
     - `data`: A pytree of observation arrays, each sharing a leading axis of size
         ``n`` (e.g. a single ``(n, dim)`` array, or a tuple/dict of such arrays
         matching a structured `dist.log_prob` event). Leaves may be `None`.
-    - `loss_fn`: Loss with signature ``(params, static, x, key)``. Defaults to
+    - `loss_fn`: Loss with signature ``(model, x, key)``, where ``model`` is the
+        distribution reconstructed from the current parameters. Defaults to
         [`fleqx.train.MaximumLikelihoodLoss`][].
     - `learning_rate`: Adam learning rate. Ignored if `optimizer` is given.
     - `optimizer`: An optax optimizer. Defaults to ``optax.adam(learning_rate)``.
@@ -117,7 +119,7 @@ def fit(
         for i in range(leading_axis_size(val_batches)):
             batch = jax.tree_util.tree_map(lambda a: a[i], val_batches)
             key, subkey = jr.split(key)
-            loss_i = eqx.filter_jit(loss_fn)(params, static, batch, key=subkey)
+            loss_i = evaluate(params, static, batch, loss_fn=loss_fn, key=subkey)
             batch_losses.append(loss_i)
         losses["val"].append((sum(batch_losses) / len(batch_losses)).item())
 

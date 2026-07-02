@@ -12,6 +12,9 @@ with a leading batch axis.
   dict of independently-trained distributions and their corresponding data arrays --
   not just a single distribution and a single `(n, dim)` array. Pytree leaves may be
   `None` for fields you're not using.
+- Each flow constructor also accepts `template=` in place of `dim`, for a
+  distribution over an arbitrary pytree of arrays (e.g. a dict of named variables)
+  instead of a flat vector. Requires gvcallen's distreqx fork (see Installation).
 - Bijectors that also exist in [gvcallen's distreqx
   fork](https://github.com/gvcallen/distreqx) are used automatically when that fork
   is installed in place of the PyPI release of `distreqx` -- see Installation below.
@@ -27,14 +30,18 @@ import jax.random as jr
 import fleqx
 
 key = jr.key(0)
-flow = fleqx.flows.coupling_flow(key, dim=2)
+flow = fleqx.coupling_flow(key, dim=2)
 
 sample = flow.sample(jr.key(1))
 log_p = flow.log_prob(sample)
 
 data = jr.normal(jr.key(2), (1000, 2))
-flow, losses = fleqx.train.fit(jr.key(3), flow, data)
+flow, losses = fleqx.fit(jr.key(3), flow, data)
 ```
+
+`coupling_flow`, `masked_autoregressive_flow`, `planar_flow` and `fit` are also
+available at their fully-qualified paths (`fleqx.flows.coupling_flow`,
+`fleqx.train.fit`, etc.), alongside the rest of each submodule.
 
 ## Installation
 
@@ -58,10 +65,12 @@ See the [documentation](https://gvcallen.github.io/fleqx) for the full API.
 
 ## Acknowledgements
 
-Built on [distreqx](https://github.com/lockwo/distreqx) (Owen Lockwood). The
-bijectors were ported from [flowjax](https://github.com/danielward27/flowjax)
-(Daniel Ward), a more complete flows library that's worth using directly if you don't
-specifically need the distreqx API.
+Built on [distreqx](https://github.com/lockwo/distreqx) (Owen Lockwood) and
+[parax](https://github.com/gvcallen/parax) (freezing/unwrapping of fixed
+sub-components, e.g. `data=`'s standardizing layer). The bijectors were ported from
+[flowjax](https://github.com/danielward27/flowjax) (Daniel Ward), a more complete
+flows library that's worth using directly if you don't specifically need the
+distreqx API.
 
 ## Development
 

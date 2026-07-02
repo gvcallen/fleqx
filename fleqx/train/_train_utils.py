@@ -16,24 +16,60 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import parax
 from jax import jit
 from jaxtyping import Array, PRNGKeyArray, PyTree, Scalar
+
+
+def combine_and_unwrap(params: PyTree, static: PyTree) -> PyTree:
+    """Reconstructs a model from `params`/`static`, resolving any parax wrappers.
+
+    `parax.unwrap` has to be called fresh on every reconstruction (not once when the
+    model was first built), since `fit` calls this inside every differentiated step
+    -- a `stop_gradient` from an earlier, unrelated trace has no effect on a later
+    one.
+    """
+    return parax.unwrap(eqx.combine(params, static))
 
 
 @eqx.filter_jit
 def step(
     params: PyTree,
+    static: PyTree,
     *args,
     optimizer: optax.GradientTransformation,
     opt_state: PyTree,
     loss_fn: Callable[..., Scalar],
     **kwargs,
 ) -> tuple[PyTree, PyTree, Scalar]:
-    """A single optimisation step."""
-    loss_val, grads = eqx.filter_value_and_grad(loss_fn)(params, *args, **kwargs)
+    """A single optimisation step.
+
+    Calls `loss_fn(model, *args, **kwargs)`, where `model` is reconstructed from
+    `params`/`static` via `combine_and_unwrap`.
+    """
+
+    def _loss(params: PyTree, *args, **kwargs) -> Scalar:
+        return loss_fn(combine_and_unwrap(params, static), *args, **kwargs)
+
+    loss_val, grads = eqx.filter_value_and_grad(_loss)(params, *args, **kwargs)
     updates, opt_state = optimizer.update(grads, opt_state, params=params)
     params = eqx.apply_updates(params, updates)
     return params, opt_state, loss_val
+
+
+@eqx.filter_jit
+def evaluate(
+    params: PyTree,
+    static: PyTree,
+    *args,
+    loss_fn: Callable[..., Scalar],
+    **kwargs,
+) -> Scalar:
+    """Evaluates `loss_fn` without computing gradients or updating `params`.
+
+    Otherwise identical to `step`; used for validation.
+    """
+    return loss_fn(combine_and_unwrap(params, static), *args, **kwargs)
 
 
 def leading_axis_size(data: PyTree) -> int:

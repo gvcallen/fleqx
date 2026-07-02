@@ -13,12 +13,15 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
+from distreqx import bijectors as distreqx_bijectors
 from distreqx.bijectors import AbstractBijector
 from distreqx.distributions import AbstractDistribution, Transformed
 
 import fleqx
 
 DIM = 3
+
+_FORK_INSTALLED = hasattr(distreqx_bijectors, "Split")
 
 # (constructor, extra kwargs beyond `key`, `dim`, `flow_layers`, `data`) for each flow
 # type. Not every constructor takes the same conditioner-network arguments (e.g.
@@ -115,6 +118,14 @@ def test_invalid_dim_raises(flow_name):
         ctor(jr.key(0), dim=0, **kwargs)
 
 
+def test_dim_and_template_are_mutually_exclusive(flow_name):
+    ctor, kwargs = FLOW_CONSTRUCTORS[flow_name]
+    with pytest.raises(ValueError, match="Exactly one"):
+        ctor(jr.key(0), **kwargs)  # neither given
+    with pytest.raises(ValueError, match="Exactly one"):
+        ctor(jr.key(0), dim=DIM, template=jnp.zeros(DIM), **kwargs)  # both given
+
+
 @pytest.mark.parametrize("method", ["mean", "mode", "entropy"])
 def test_undefined_moments_raise(flow, method):
     # None of these flows have a constant-Jacobian bijector, so these are genuinely
@@ -191,3 +202,86 @@ def test_masked_autoregressive_works_for_larger_dim():
     x = flow.sample(jr.key(1))
     assert x.shape == (20,)
     assert jnp.isfinite(flow.log_prob(x))
+
+
+def test_root_level_exports_match_submodule(flow_name):
+    # fleqx.coupling_flow etc. are convenience aliases for the same objects, not
+    # copies -- fleqx's whole API surface is flows, so these shouldn't need the
+    # fleqx.flows.* prefix for everyday use.
+    ctor, _ = FLOW_CONSTRUCTORS[flow_name]
+    assert getattr(fleqx, ctor.__name__) is ctor
+    assert fleqx.fit is fleqx.train.fit
+
+
+@pytest.mark.skipif(
+    _FORK_INSTALLED,
+    reason="only exercises the fork-unavailable error path",
+)
+def test_template_raises_clear_error_without_fork(flow_name):
+    ctor, kwargs = FLOW_CONSTRUCTORS[flow_name]
+    template = {"a": jnp.zeros(2), "b": jnp.zeros(3)}
+    with pytest.raises(RuntimeError, match="gvcallen's fork"):
+        ctor(jr.key(0), template=template, **kwargs)
+
+
+@pytest.mark.skipif(not _FORK_INSTALLED, reason="requires gvcallen's distreqx fork")
+class TestTemplateFlow:
+    """`template=` lets a flow represent a distribution over an arbitrary PyTree."""
+
+    TEMPLATE = {"a": jnp.zeros(2), "b": jnp.zeros((2, 2))}
+
+    def _make(self, flow_name, key, **overrides):
+        ctor, kwargs = FLOW_CONSTRUCTORS[flow_name]
+        return ctor(key, template=self.TEMPLATE, flow_layers=2, **{**kwargs, **overrides})
+
+    def test_sample_matches_template_structure(self, flow_name):
+        flow = self._make(flow_name, jr.key(0))
+        sample = flow.sample(jr.key(1))
+        assert jax.tree_util.tree_structure(sample) == jax.tree_util.tree_structure(
+            self.TEMPLATE
+        )
+        shapes = jax.tree_util.tree_map(lambda x: x.shape, sample)
+        assert shapes == jax.tree_util.tree_map(lambda x: x.shape, self.TEMPLATE)
+        assert all(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree_util.tree_leaves(sample))
+
+    def test_log_prob_is_scalar(self, flow_name):
+        flow = self._make(flow_name, jr.key(0))
+        sample = flow.sample(jr.key(1))
+        lp = flow.log_prob(sample)
+        assert lp.shape == ()
+        assert jnp.isfinite(lp)
+
+    def test_dim_is_inferred_as_total_template_size(self, flow_name):
+        flow = self._make(flow_name, jr.key(0))
+        assert flow.distribution.event_shape == (2 + 4,)
+
+    def test_data_standardization_with_pytree_data(self, flow_name):
+        data = {
+            "a": jr.normal(jr.key(2), (256, 2)) * jnp.array([50.0, 0.02])
+            + jnp.array([300.0, -20.0]),
+            "b": jr.normal(jr.key(3), (256, 2, 2)) * 10.0 + 1000.0,
+        }
+        flow = self._make(flow_name, jr.key(4), data=data)
+        sample = flow.sample(jr.key(5))
+        assert jnp.isfinite(flow.log_prob(sample))
+
+    def test_fit_reduces_loss(self, flow_name):
+        # Plain standard-normal data (matching the untrained base distribution
+        # exactly) gives training no clear signal to follow; shift/scale it like
+        # the array-shaped flow tests do, for a robust target.
+        data = {
+            "a": jr.normal(jr.key(6), (512, 2)) * 0.5 + jnp.array([2.0, -1.0]),
+            "b": jr.normal(jr.key(7), (512, 2, 2)) * 1.5 - 1.0,
+        }
+        flow = self._make(flow_name, jr.key(8))
+        _, losses = fleqx.fit(
+            jr.key(9),
+            flow,
+            data,
+            learning_rate=1e-3,
+            max_epochs=15,
+            batch_size=64,
+            show_progress=False,
+        )
+        assert all(jnp.isfinite(jnp.array(losses["train"])))
+        assert losses["train"][-1] < losses["train"][0]

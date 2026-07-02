@@ -22,6 +22,7 @@ dependencies = [
     "optax",
     "tqdm",
     "distreqx>=0.0.3",
+    "parax>=0.10.2",
 ]
 
 [project.optional-dependencies]
