@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from distreqx.distributions import AbstractDistribution
+from parax.distributions import AbstractDistribution
 from jaxtyping import PRNGKeyArray, PyTree, Scalar
 from tqdm import tqdm
 

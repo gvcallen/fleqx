@@ -21,8 +21,7 @@ dependencies = [
     "jaxtyping",
     "optax",
     "tqdm",
-    "distreqx>=0.0.3",
-    "parax>=0.10.2",
+    "parax>=0.11.0",
 ]
 
 [project.optional-dependencies]

@@ -16,20 +16,23 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import parax
-from distreqx.bijectors import (
+from parax.bijectors import (
     AbstractBijector,
     AbstractForwardInverseBijector,
     AbstractFwdLogDetJacBijector,
     AbstractInvLogDetJacBijector,
     Chain,
+    Leafwise,
+    Reshape,
+    Restructure,
     ScalarAffine,
+    Split,
 )
-from distreqx.distributions import Independent, Normal, Transformed
+from parax.distributions import Independent, Normal, Transformed
 from jax.nn import relu
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 from .bijectors import Coupling, Inverse, MaskedAutoregressive, Permute, Planar
-from .bijectors._fork import require as _require_fork_bijector
 
 __all__ = ["coupling_flow", "masked_autoregressive_flow", "planar_flow"]
 
@@ -112,16 +115,7 @@ def _array_to_tree_bijector(template: PyTree[Array]) -> AbstractBijector:
     define the event shapes of the output. The resulting bijector's forward
     direction expects a 1D array whose length matches `template`'s total number of
     elements.
-
-    Requires [gvcallen's distreqx fork](https://github.com/gvcallen/distreqx):
-    `Split`, `Reshape`, `Restructure` and `Leafwise` aren't in the PyPI release.
     """
-    needed_by = "A pytree-shaped flow (`template=`)"
-    Split = _require_fork_bijector("Split", needed_by=needed_by)
-    Reshape = _require_fork_bijector("Reshape", needed_by=needed_by)
-    Restructure = _require_fork_bijector("Restructure", needed_by=needed_by)
-    Leafwise = _require_fork_bijector("Leafwise", needed_by=needed_by)
-
     leaves, treedef = jax.tree_util.tree_flatten(template)
     if not leaves:
         raise ValueError("`template` cannot be an empty PyTree.")
@@ -218,9 +212,8 @@ def coupling_flow(
         `dim` for a distribution over an arbitrary pytree shape (e.g. a dict of
         named arrays) rather than a flat vector. `dim` is inferred as `template`'s
         total number of elements, and `data` (if given) should then be a pytree of
-        the same structure, each leaf with a leading batch axis. Requires
-        [gvcallen's distreqx fork](https://github.com/gvcallen/distreqx). Defaults
-        to `None`.
+        the same structure, each leaf with a leading batch axis. Defaults to
+        `None`.
     - `flow_layers`: Number of coupling layers. Defaults to 8.
     - `nn_width`: Conditioner hidden layer width. Defaults to 50.
     - `nn_depth`: Conditioner depth. Defaults to 1.
@@ -293,9 +286,8 @@ def masked_autoregressive_flow(
         `dim` for a distribution over an arbitrary pytree shape (e.g. a dict of
         named arrays) rather than a flat vector. `dim` is inferred as `template`'s
         total number of elements, and `data` (if given) should then be a pytree of
-        the same structure, each leaf with a leading batch axis. Requires
-        [gvcallen's distreqx fork](https://github.com/gvcallen/distreqx). Defaults
-        to `None`.
+        the same structure, each leaf with a leading batch axis. Defaults to
+        `None`.
     - `flow_layers`: Number of masked autoregressive layers. Defaults to 8.
     - `nn_width`: Conditioner hidden layer width. Defaults to 50.
     - `nn_depth`: Conditioner depth. Defaults to 1.
@@ -362,9 +354,8 @@ def planar_flow(
         `dim` for a distribution over an arbitrary pytree shape (e.g. a dict of
         named arrays) rather than a flat vector. `dim` is inferred as `template`'s
         total number of elements, and `data` (if given) should then be a pytree of
-        the same structure, each leaf with a leading batch axis. Requires
-        [gvcallen's distreqx fork](https://github.com/gvcallen/distreqx). Defaults
-        to `None`.
+        the same structure, each leaf with a leading batch axis. Defaults to
+        `None`.
     - `flow_layers`: Number of planar layers. Defaults to 8.
     - `negative_slope`: Negative slope of the leaky ReLU used within each layer (see
         [`fleqx.bijectors.Planar`][]), in `(0, 1)`. Defaults to 0.01.

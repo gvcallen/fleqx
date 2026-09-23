@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from distreqx.bijectors import AbstractBijector
+from parax.bijectors import AbstractBijector
 
 from fleqx.bijectors import Coupling, Inverse, MaskedAutoregressive, Permute, Planar
 

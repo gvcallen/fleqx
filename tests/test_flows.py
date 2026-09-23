@@ -13,15 +13,13 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from distreqx import bijectors as distreqx_bijectors
-from distreqx.bijectors import AbstractBijector
-from distreqx.distributions import AbstractDistribution, Transformed
+from parax.bijectors import AbstractBijector
+from parax.distributions import AbstractDistribution, Transformed
 
 import fleqx
 
 DIM = 3
 
-_FORK_INSTALLED = hasattr(distreqx_bijectors, "Split")
 
 # (constructor, extra kwargs beyond `key`, `dim`, `flow_layers`, `data`) for each flow
 # type. Not every constructor takes the same conditioner-network arguments (e.g.
@@ -213,18 +211,6 @@ def test_root_level_exports_match_submodule(flow_name):
     assert fleqx.fit is fleqx.train.fit
 
 
-@pytest.mark.skipif(
-    _FORK_INSTALLED,
-    reason="only exercises the fork-unavailable error path",
-)
-def test_template_raises_clear_error_without_fork(flow_name):
-    ctor, kwargs = FLOW_CONSTRUCTORS[flow_name]
-    template = {"a": jnp.zeros(2), "b": jnp.zeros(3)}
-    with pytest.raises(RuntimeError, match="gvcallen's fork"):
-        ctor(jr.key(0), template=template, **kwargs)
-
-
-@pytest.mark.skipif(not _FORK_INSTALLED, reason="requires gvcallen's distreqx fork")
 class TestTemplateFlow:
     """`template=` lets a flow represent a distribution over an arbitrary PyTree."""
 

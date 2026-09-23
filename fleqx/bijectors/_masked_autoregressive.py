@@ -7,7 +7,7 @@ from collections.abc import Callable
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from distreqx.bijectors import (
+from parax.bijectors import (
     AbstractBijector,
     AbstractForwardInverseBijector,
     AbstractFwdLogDetJacBijector,

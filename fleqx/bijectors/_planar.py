@@ -5,7 +5,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from distreqx.bijectors import (
+from parax.bijectors import (
     AbstractBijector,
     AbstractForwardInverseBijector,
     AbstractFwdLogDetJacBijector,

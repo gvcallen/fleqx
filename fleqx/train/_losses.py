@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax
-from distreqx.distributions import AbstractDistribution
+from parax.distributions import AbstractDistribution
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 
 

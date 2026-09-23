@@ -6,28 +6,16 @@ users should build flows with a constructor from [`fleqx.flows`][] instead; this
 module is for composing layers by hand.
 
 `Coupling`, `MaskedAutoregressive` and `Planar` are fleqx-native: no equivalent
-exists in `distreqx` itself (yet -- see [gvcallen's distreqx fork]
-(https://github.com/gvcallen/distreqx) for bijectors pending upstream review).
-
-`Inverse` and `Permute`, by contrast, also exist in that fork. fleqx depends only on
-the PyPI release of `distreqx`, so a plain `pip install fleqx` works standalone; but
-if the fork is installed in its place (`pip install
-git+https://github.com/gvcallen/distreqx.git@main`), fleqx prefers its
-implementations over the bundled fallbacks below. A bijector with no fallback (e.g.
-[`fleqx.flows`][]'s `template=` support) should instead use
-[`fleqx.bijectors._fork.require`][], which raises a clear `RuntimeError` with install
-instructions rather than falling back, since there's nothing to fall back to.
+exists in `distreqx` itself. `Inverse` and `Permute` come from
+[`parax.bijectors`](https://gvcallen.github.io/parax), which re-exports the
+installed `distreqx`'s versions where it has them and fills in the rest, so any
+`distreqx` from the PyPI release onwards works.
 """
 
-try:
-    from distreqx.bijectors import Inverse as Inverse
-except ImportError:
-    from ._inverse import Inverse as Inverse
-
-try:
-    from distreqx.bijectors import Permute as Permute
-except ImportError:
-    from ._permute import Permute as Permute
+from parax.bijectors import (
+    Inverse as Inverse,
+    Permute as Permute,
+)
 
 from ._coupling import Coupling as Coupling
 from ._masked_autoregressive import MaskedAutoregressive as MaskedAutoregressive

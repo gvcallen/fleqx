@@ -5,10 +5,9 @@ these directly, but they compose like any other
 [`distreqx.bijectors.AbstractBijector`](https://lockwo.github.io/distreqx/api/bijectors/_bijector/)
 if you want to assemble a flow by hand.
 
-`Inverse` and `Permute` also exist in [gvcallen's distreqx
-fork](https://github.com/gvcallen/distreqx) (pending upstream review); fleqx uses
-that implementation when the fork is installed in place of the PyPI release of
-`distreqx`, falling back to the bundled version documented here otherwise.
+`Inverse` and `Permute` are re-exported from
+[`parax.bijectors`](https://gvcallen.github.io/parax), which takes them from the
+installed `distreqx` where it has them and fills them in where it doesn't.
 
 ::: fleqx.bijectors.Coupling
     options:

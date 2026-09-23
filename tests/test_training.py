@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import parax
 import pytest
-from distreqx.distributions import AbstractDistribution, Independent, Normal
+from parax.distributions import AbstractDistribution, Independent, Normal
 
 import fleqx
 from fleqx.train import MaximumLikelihoodLoss, fit
