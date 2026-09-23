@@ -5,9 +5,11 @@ these directly, but they compose like any other
 [`distreqx.bijectors.AbstractBijector`](https://lockwo.github.io/distreqx/api/bijectors/_bijector/)
 if you want to assemble a flow by hand.
 
-`Inverse` and `Permute` are re-exported from
+`fleqx.bijectors` also re-exports `Inverse` and `Permute` from
 [`parax.bijectors`](https://gvcallen.github.io/parax), which takes them from the
-installed `distreqx` where it has them and fills them in where it doesn't.
+installed `distreqx` where it has them and fills them in where it doesn't. They are
+documented there rather than here, since which implementation you get depends on
+your `distreqx`.
 
 ::: fleqx.bijectors.Coupling
     options:
@@ -27,16 +29,3 @@ installed `distreqx` where it has them and fills them in where it doesn't.
     options:
         members:
             - __init__
-
----
-
-::: fleqx.bijectors.Permute
-    options:
-        members:
-            - __init__
-
----
-
-::: fleqx.bijectors.Inverse
-    options:
-        members: false

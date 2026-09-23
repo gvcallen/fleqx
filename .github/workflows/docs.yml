@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
 
 # This is the new block that grants the bot write access to push to gh-pages
 permissions:
